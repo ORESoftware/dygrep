@@ -22,7 +22,6 @@ if (!Number.isInteger(port)) {
   throw chalk.magenta('Please pass a port that can be parsed to an integer as the argument following -p.')
 }
 
-
 const s = net.createConnection({port});
 s.setEncoding('utf8');
 
@@ -46,7 +45,7 @@ const prompt = chalk.blueBright(`(localhost:${port})`) + chalk.blueBright.bold(`
 
 s.once('connect', () => {
 
-  console.log(chalk.green('client is connected to live-mutex broker at port:'), chalk.greenBright.bold(String(port)));
+  console.log(chalk.green('dygrep client is connected to server at port:'), chalk.green.bold(String(port)));
   process.stdout.write(prompt);
 
   let resetCurrentLine = function () {
@@ -64,8 +63,6 @@ s.once('connect', () => {
 
     const str = String(buf);
     const charAsAscii = String(buf.toString().charCodeAt(0));
-
-    // const charAsAscii = buf.readInt16LE();
 
     switch (charAsAscii) {
 
@@ -108,8 +105,6 @@ s.once('connect', () => {
         break;
 
       case '27':
-        // process.stdout.write('\n');
-        // process.stdout.write(prompt);
         previousCmd = commands.pop();
         currentLine = previousCmd;
         resetCurrentLine();
@@ -117,17 +112,11 @@ s.once('connect', () => {
         break;
 
       case '127':
-        // process.stdout.write('\n');
-        // process.stdout.write(prompt);
         resetCurrentLine();
         currentLine = '';
-
-        // readline.cursorTo(process.stdout, 21);   // move cursor to beginning of line
-        // process.stdout.write(previousCmd);
         break;
 
       default:
-        // console.log('here is is the char:', charAsAscii);
         process.stdout.write(str);
         currentLine += str || '';
         break;

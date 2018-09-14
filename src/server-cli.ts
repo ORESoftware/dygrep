@@ -12,11 +12,11 @@ import log from './logger';
 const portIndex = process.argv.indexOf('-p');
 let port = 4900;
 
-if(portIndex > 1){
+if (portIndex > 1) {
   port = parseInt(process.argv[portIndex + 1]);
 }
 
-if(!Number.isInteger(port)){
+if (!Number.isInteger(port)) {
   throw chalk.magenta('Please pass a port that can be parsed to an integer as the argument following -p.')
 }
 
@@ -31,15 +31,15 @@ rl.on('line', l => {
 
   let hasKeys = false;
 
-  for(let [k,v] of regex){
+  for (let [k, v] of regex) {
     hasKeys = true;
-    if(v.test(l)){
+    if (v.test(l)) {
       process.stdout.write(l + '\n');
       break;
     }
   }
 
-  if(!hasKeys){
+  if (!hasKeys) {
     process.stdout.write(l + '\n');
   }
 });
@@ -52,7 +52,6 @@ interface IncomingTCPMessage {
 }
 
 
-
 const server = net.createServer(s => {
 
   s.on('data', d => {
@@ -63,23 +62,23 @@ const server = net.createServer(s => {
 
     console.log('recieved JSON data:', d);
 
-    if(!d.command){
+    if (!d.command) {
       log.error('No "command" field was found:', d);
-      return''
+      return ''
     }
 
     const c = d.command;
 
-    if(c.add){
+    if (c.add) {
       regex.set(c.add, new RegExp(c.add));
-      s.write(`Added regex: ${c.add}.\n`);
+      s.write(JSON.stringify({message: `Added regex: ${c.add}.`}) + `\n`);
       log.info('Added regex:', c.add);
       return;
     }
 
-    if(c.remove){
+    if (c.remove) {
       regex.delete(c.remove);
-      s.write(`Deleted regex: ${c.remove}.\n`);
+      s.write(JSON.stringify({message: `Deleted regex: ${c.remove}.`}) + `\n`);
       log.info('Removed regex:', c.remove);
       return;
     }
