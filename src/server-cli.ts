@@ -52,7 +52,7 @@ interface IncomingTCPMessage {
 const server = net.createServer(s => {
 
   s.on('data', d => {
-    console.log('received raw data:', String(d));
+    log.debug('dygrep received raw data:', String(d));
   });
 
   const sendMessage = (m: any) => {
@@ -61,7 +61,7 @@ const server = net.createServer(s => {
 
   s.pipe(createParser()).on('data', (d: IncomingTCPMessage) => {
 
-    console.log('recieved JSON data:', d);
+    log.debug('dygrep recieved JSON data:', d);
 
     if (!d.command) {
       log.error('No "command" field was found:', d);

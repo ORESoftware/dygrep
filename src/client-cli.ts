@@ -10,7 +10,6 @@ import chalk from 'chalk';
 import {createParser} from "./json-parser";
 import log from './logger';
 
-
 const portIndex = process.argv.indexOf('-p');
 let port = 4900;
 
@@ -30,8 +29,9 @@ s.once('error', function (e) {
 });
 
 s.pipe(createParser()).on('data', function (d: any) {
-  console.log('dygrep server response:', d.message);
-  process.stdout.write(prompt);
+  log.info('dygrep server response:');
+  log.info(d.message);
+  // process.stdout.write(prompt);
 });
 
 s.once('end', () => {
@@ -44,7 +44,7 @@ s.once('end', () => {
 const acceptableCommands = {
   'add:': true,
   'list': true,
-  'removeall:': true,
+  'removeall': true,
   'remove:': true,
   'clear': true,
   'help': true
@@ -57,10 +57,16 @@ s.once('connect', () => {
   console.log(chalk.green('dygrep client is connected to server at port:'), chalk.green.bold(String(port)));
   process.stdout.write(prompt);
 
-  let resetCurrentLine = function () {
+  let resetCurrentLine = () => {
     readline.clearLine(process.stdout, 0);  // clear current text
     readline.cursorTo(process.stdout, 0);
     process.stdout.write(prompt);
+  };
+
+  let onBackspace = () => {
+    readline.clearLine(process.stdout, 0);  // clear current text
+    readline.cursorTo(process.stdout, 0);
+    process.stdout.write(prompt + currentLine);
   };
 
   let currentLine = '', previousCmd = '';
@@ -68,71 +74,7 @@ s.once('connect', () => {
 
   process.stdin.setRawMode(true);
 
-  process.stdin.on('data', (buf) => {
-
-    const str = String(buf);
-    const charAsAscii = String(buf.toString().charCodeAt(0));
-
-    switch (charAsAscii) {
-
-      case '9':
-
-        let matches = Object.keys(acceptableCommands).filter(v => String(v).startsWith(currentLine));
-
-        if (matches.length !== 1) {
-          process.stdout.write('\n');
-          console.log(matches);
-          process.stdout.write(prompt + currentLine);
-          return;
-        }
-
-        resetCurrentLine();
-        currentLine = matches[0];
-        process.stdout.write(currentLine);
-        break;
-
-      case '3':
-        console.log('\nYou pressed Ctrl-C. Sending SIGINT.');
-        process.kill(process.pid, 'SIGINT');
-        break;
-
-      case '4':
-        console.log('\nYou pressed Ctrl-D. Bye!');
-        process.exit(0);
-        break;
-
-      case '12':
-        process.stdout.write('\x1Bc');
-        process.stdout.write(prompt);
-        break;
-
-      case '13':
-        process.stdout.write('\n');
-        currentLine && commands.push(currentLine);
-        process.stdin.emit('linex', currentLine || '');
-        currentLine = '';
-        break;
-
-      case '27':
-        previousCmd = commands.pop();
-        currentLine = previousCmd;
-        resetCurrentLine();
-        process.stdout.write(previousCmd);
-        break;
-
-      case '127':
-        resetCurrentLine();
-        currentLine = '';
-        break;
-
-      default:
-        process.stdout.write(str);
-        currentLine += str || '';
-        break;
-    }
-  });
-
-  process.stdin.on('linex', function (d) {
+  const onUserHitReturn = function (d: string) {
 
     readline.clearLine(process.stdout, 0);  // clear current text
     readline.cursorTo(process.stdout, 0);   // move cursor to beginning of line
@@ -185,7 +127,70 @@ s.once('connect', () => {
     console.log('Try using "help" to view available commands.');
     process.stdout.write(prompt);
 
+  };
 
+  process.stdin.on('data', (buf) => {
+
+    const str = String(buf);
+    const charAsAscii = String(buf.toString().charCodeAt(0));
+
+    switch (charAsAscii) {
+
+      case '9': // tab
+
+        let matches = Object.keys(acceptableCommands).filter(v => String(v).startsWith(currentLine));
+
+        if (matches.length !== 1) {
+          process.stdout.write('\n');
+          console.log(matches);
+          process.stdout.write(prompt + currentLine);
+          return;
+        }
+
+        resetCurrentLine();
+        currentLine = matches[0];
+        process.stdout.write(currentLine);
+        break;
+
+      case '3':
+        console.log('\nYou pressed Ctrl-C. Sending SIGINT.');
+        process.kill(process.pid, 'SIGINT');
+        break;
+
+      case '4':
+        console.log('\nYou pressed Ctrl-D. Bye!');
+        process.exit(0);
+        break;
+
+      case '12':
+        process.stdout.write('\x1Bc');
+        process.stdout.write(prompt);
+        break;
+
+      case '13': // enter/return
+        process.stdout.write('\n');
+        currentLine && commands.push(currentLine);
+        onUserHitReturn(currentLine || '');
+        currentLine = '';
+        break;
+
+      case '27':
+        previousCmd = commands.pop();
+        currentLine = previousCmd;
+        resetCurrentLine();
+        process.stdout.write(previousCmd);
+        break;
+
+      case '127':
+        currentLine = currentLine.slice(0, -1);
+        onBackspace();
+        break;
+
+      default:
+        process.stdout.write(str);
+        currentLine += str || '';
+        break;
+    }
   });
 
   process.stdin.on('close', () => {
