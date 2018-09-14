@@ -30,12 +30,21 @@ s.once('error', function (e) {
 });
 
 s.pipe(createParser()).on('data', function (d: any) {
-  console.log('dygrep server response:', String(d.message));
+  console.log('dygrep server response:', d.message);
   process.stdout.write(prompt);
+});
+
+s.once('end', () => {
+  readline.clearLine(process.stdout, 0);  // clear current text
+  readline.cursorTo(process.stdout, 0);
+  log.warn('lsm-client socket connection ended/closed, so we will exit.');
+  process.exit(1);
 });
 
 const acceptableCommands = {
   'add:': true,
+  'list': true,
+  'removeall:': true,
   'remove:': true,
   'clear': true,
   'help': true
@@ -148,14 +157,26 @@ s.once('connect', () => {
       return;
     }
 
+    if (lc === 'removeall') {
+      console.log('sending message to server:', lc);
+      s.write(JSON.stringify({command: {removeall: true}}) + '\n');
+      return;
+    }
+
+    if (lc === 'list') {
+      console.log('sending message to server:', lc);
+      s.write(JSON.stringify({command: {list: true}}) + '\n');
+      return;
+    }
+
     if (lc.startsWith('add:')) {
-      console.log('sending message to server:', String(d));
+      console.log('sending message to server:', lc);
       s.write(JSON.stringify({command: {add: lc.slice(4)}}) + '\n');
       return;
     }
 
     if (lc.startsWith('remove:')) {
-      console.log('sending message to server:', String(d));
+      console.log('sending message to server:', lc);
       s.write(JSON.stringify({command: {remove: lc.slice(7)}}) + '\n');
       return;
     }

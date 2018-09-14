@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
-
 import * as readline from 'readline';
 import * as net from 'net';
 import chalk from 'chalk';
 import {createParser} from "./json-parser";
 import log from './logger';
-
 
 const portIndex = process.argv.indexOf('-p');
 let port = 4900;
@@ -20,7 +18,6 @@ if (!Number.isInteger(port)) {
   throw chalk.magenta('Please pass a port that can be parsed to an integer as the argument following -p.')
 }
 
-
 const rl = readline.createInterface({
   input: process.stdin.resume()
 });
@@ -29,34 +26,38 @@ const regex = new Map<string, RegExp>();
 
 rl.on('line', l => {
 
-  let hasKeys = false;
+  if (regex.size < 1) {
+    process.stdout.write(l + '\n');
+    return;
+  }
 
   for (let [k, v] of regex) {
-    hasKeys = true;
     if (v.test(l)) {
-      process.stdout.write(l + '\n');
+      process.stdout.write(chalk.magenta(' (filtered) ') + l + '\n');
       break;
     }
   }
 
-  if (!hasKeys) {
-    process.stdout.write(l + '\n');
-  }
 });
 
 interface IncomingTCPMessage {
   command: {
     add: string,
-    remove: string
+    remove: string,
+    list: boolean,
+    removeall: boolean
   }
 }
-
 
 const server = net.createServer(s => {
 
   s.on('data', d => {
     console.log('received raw data:', String(d));
   });
+
+  const sendMessage = (m: any) => {
+    s.write(JSON.stringify({message: m}) + `\n`);
+  };
 
   s.pipe(createParser()).on('data', (d: IncomingTCPMessage) => {
 
@@ -69,20 +70,32 @@ const server = net.createServer(s => {
 
     const c = d.command;
 
+    if (c.list) {
+      sendMessage({regexes: Array.from(regex.keys()).map(k => ({regex: regex.get(k), str: k}))});
+      log.info('Listing all regex for the client.');
+      return;
+    }
+
+    if (c.removeall) {
+      regex.clear();
+      sendMessage(`Cleared all regex.`);
+      log.info('Cleared all regex.');
+      return;
+    }
+
     if (c.add) {
       regex.set(c.add, new RegExp(c.add));
-      s.write(JSON.stringify({message: `Added regex: ${c.add}.`}) + `\n`);
+      sendMessage(`Added regex: ${c.add}.`);
       log.info('Added regex:', c.add);
       return;
     }
 
     if (c.remove) {
       regex.delete(c.remove);
-      s.write(JSON.stringify({message: `Deleted regex: ${c.remove}.`}) + `\n`);
+      sendMessage(`Deleted regex: ${c.remove}.`);
       log.info('Removed regex:', c.remove);
       return;
     }
-
 
     log.error('No matching field was found:', d);
     log.info('Regex:', regex);
