@@ -6,6 +6,9 @@ import * as net from 'net';
 import chalk from 'chalk';
 import {createParser} from "./json-parser";
 import log from './logger';
+import {EVCb} from "./index";
+import * as async from 'async';
+import * as util from "util";
 
 const portIndex = process.argv.indexOf('-p');
 let port = 4900;
@@ -49,14 +52,46 @@ interface IncomingTCPMessage {
   }
 }
 
+export type Task = (cb: EVCb<any>) => void;
+
+const joinMessages = (...args: string[]) => {
+  return args.join(' ');
+};
+
+const connections = new Set<net.Socket>();
+
+process.once('exit', code => {
+
+  for (let v of connections) {
+    v.destroy();
+  }
+
+  log.warn('Dygrep server is exiting with code:', code);
+});
+
 const server = net.createServer(s => {
+
+  const q = async.queue<Task, any>((task, cb) => task(cb), 1);
+
+  connections.add(s);
+
+  q.error = e => {
+    if (e) {
+      log.error(e.message || e);
+      sendMessage(false, util.inspect(e.message || e), null);
+    }
+  };
+
+  s.on('error', err => {
+    log.warn(err.message || err);
+  });
 
   s.on('data', d => {
     log.debug('dygrep received raw data:', String(d));
   });
 
-  const sendMessage = (m: any) => {
-    s.write(JSON.stringify({message: m}) + `\n`);
+  const sendMessage = (lastMessage: boolean, m: any, cb: EVCb<any>) => {
+    s.write(JSON.stringify({message: m, lastMessage}) + `\n`, cb);
   };
 
   s.pipe(createParser()).on('data', (d: IncomingTCPMessage) => {
@@ -71,34 +106,39 @@ const server = net.createServer(s => {
     const c = d.command;
 
     if (c.list) {
-      sendMessage({regexes: Array.from(regex.keys()).map(k => ({regex: regex.get(k), str: k}))});
-      log.info('Listing all regex for the client.');
-      return;
+      return q.push(cb => {
+        log.info('Listing all regex for the client.');
+        sendMessage(true, {regexes: Array.from(regex.keys()).map(k => ({regex: regex.get(k), str: k}))}, cb);
+      });
     }
 
     if (c.removeall) {
-      regex.clear();
-      sendMessage(`Cleared all regex.`);
-      log.info('Cleared all regex.');
-      return;
+      return q.push(cb => {
+        log.info('Clearing all regex.');
+        regex.clear();
+        sendMessage(true, `Cleared all regex.`, cb);
+      });
     }
 
     if (c.add) {
-      regex.set(c.add, new RegExp(c.add));
-      sendMessage(`Added regex: ${c.add}.`);
-      log.info('Added regex:', c.add);
-      return;
+      return q.push(cb => {
+        log.info('Adding regex:', c.add);
+        regex.set(c.add, new RegExp(c.add));
+        sendMessage(true, `Added regex: ${c.add}`, cb);
+      });
     }
 
     if (c.remove) {
-      regex.delete(c.remove);
-      sendMessage(`Deleted regex: ${c.remove}.`);
-      log.info('Removed regex:', c.remove);
-      return;
+      return q.push(cb => {
+        regex.delete(c.remove);
+        sendMessage(true, `Deleted regex: ${c.remove}.`, cb);
+        log.info('Removed regex:', c.remove);
+      });
     }
 
     log.error('No matching field was found:', d);
     log.info('Regex:', regex);
+    sendMessage(true, 'Your request could not be processed.', null);
 
   });
 
