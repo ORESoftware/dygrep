@@ -74,7 +74,7 @@ s.once('connect', () => {
 
   process.stdin.setRawMode(true);
 
-  const onUserHitReturn = function (d: string) {
+  const onUserHitReturn =  (d: string) => {
 
     readline.clearLine(process.stdout, 0);  // clear current text
     readline.cursorTo(process.stdout, 0);   // move cursor to beginning of line
