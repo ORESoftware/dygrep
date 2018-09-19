@@ -7,7 +7,7 @@ import * as assert from 'assert';
 import * as readline from 'readline';
 import * as net from 'net';
 import chalk from 'chalk';
-import {createParser} from "./json-parser";
+import {JSONParser} from "@oresoftware/json-stream-parser";
 import log from './logger';
 
 const portIndex = process.argv.indexOf('-p');
@@ -45,9 +45,22 @@ let onBackspace = () => {
   process.stdout.write(prompt + currentLine);
 };
 
+
+process.on('uncaughtException', e => {
+  const v = e.message || e;
+  log.error('uncaught exception:', chalk.magenta(typeof v === 'string' ? v : util.inspect(v)));
+  resetCurrentLine();
+});
+
+process.on('unhandledRejection', (r, d) => {
+  const v = r.message || r;
+  log.error('unhandled rejection:', chalk.magenta(typeof v === 'string' ? v : util.inspect(v)));
+  resetCurrentLine();
+});
+
+
 let s: net.Socket, currentLine = '', previousCmd = '';
 let commands: Array<string> = [];
-
 
 const onUserHitReturn = (d: string) => {
 
@@ -104,17 +117,19 @@ const onUserHitReturn = (d: string) => {
 
 };
 
-
 process.stdin.setRawMode(true);
 process.stdin.on('data', (buf) => {
 
-  if(!(s && s.writable)){
-    log.warn('We are not (yet) connected to the dygrep server.');
-    return;
-  }
-
   const str = String(buf);
   const charAsAscii = String(buf.toString().charCodeAt(0));
+
+  if (!['3', '4'].includes(charAsAscii)) {
+    // if we are not using ctrl-c or ctrl-d, then ignore other commands
+    if (!(s && s.writable)) {
+      log.warn('We are not (yet) connected to the dygrep server.');
+      return;
+    }
+  }
 
   switch (charAsAscii) {
 
@@ -177,7 +192,7 @@ process.stdin.on('data', (buf) => {
 
 const handleConnection = (s: net.Socket): net.Socket => {
 
-  s.pipe(createParser()).on('data', (d: any) => {
+  s.pipe(new JSONParser()).on('data', (d: any) => {
 
     log.info(chalk.green.underline('dygrep server response:'));
 

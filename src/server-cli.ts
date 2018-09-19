@@ -4,7 +4,7 @@
 import * as readline from 'readline';
 import * as net from 'net';
 import chalk from 'chalk';
-import {createParser} from "./json-parser";
+import {JSONParser} from "@oresoftware/json-stream-parser";
 import log from './logger';
 import {EVCb} from "./index";
 import * as async from 'async';
@@ -94,7 +94,7 @@ const server = net.createServer(s => {
     s.write(JSON.stringify({message: m, lastMessage}) + `\n`, cb);
   };
 
-  s.pipe(createParser()).on('data', (d: IncomingTCPMessage) => {
+  s.pipe(new JSONParser()).on('data', (d: IncomingTCPMessage) => {
 
     log.debug('dygrep recieved JSON data:', d);
 
