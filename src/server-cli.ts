@@ -60,15 +60,6 @@ const joinMessages = (...args: string[]) => {
 
 const connections = new Set<net.Socket>();
 
-process.once('exit', code => {
-
-  for (let v of connections) {
-    v.destroy();
-  }
-
-  log.warn('Dygrep server is exiting with code:', code);
-});
-
 const server = net.createServer(s => {
 
   const q = async.queue<Task, any>((task, cb) => task(cb), 1);
@@ -146,3 +137,39 @@ const server = net.createServer(s => {
 
 server.listen(port);
 
+const onSignal = (signal: string) => {
+
+  log.warn('services-manager received signal:', signal);
+
+  const to = setTimeout(() => {
+    log.warn('Server close call timed out.');
+    process.exit(1);
+  }, 500);
+
+  server.close((err: any) => {
+    clearTimeout(to);
+    if (err) {
+      log.warn(err);
+      process.exit(1);
+    }
+    else {
+      process.exit(0);
+    }
+  });
+
+};
+
+process.once('SIGTERM', onSignal);
+process.once('SIGINT', onSignal);
+
+process.once('exit', code => {
+
+  log.warn('Dygrep server is exiting with code:', code);
+
+  server.close();
+
+  for (let v of connections) {
+    v.destroy();
+  }
+
+});

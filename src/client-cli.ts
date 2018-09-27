@@ -45,7 +45,6 @@ let onBackspace = () => {
   process.stdout.write(prompt + currentLine);
 };
 
-
 process.on('uncaughtException', e => {
   const v = e.message || e;
   log.error('uncaught exception:', chalk.magenta(typeof v === 'string' ? v : util.inspect(v)));
@@ -58,11 +57,15 @@ process.on('unhandledRejection', (r, d) => {
   resetCurrentLine();
 });
 
+const container = {
+  conn: null as net.Socket
+};
 
-let s: net.Socket, currentLine = '', previousCmd = '';
-let commands: Array<string> = [];
+let currentLine = '', previousCmd = '', commands: Array<string> = [];
 
 const onUserHitReturn = (d: string) => {
+
+  const s = container.conn;
 
   readline.clearLine(process.stdout, 0);  // clear current text
   readline.cursorTo(process.stdout, 0);   // move cursor to beginning of line
@@ -120,6 +123,7 @@ const onUserHitReturn = (d: string) => {
 process.stdin.setRawMode(true);
 process.stdin.on('data', (buf) => {
 
+  const s = container.conn;
   const str = String(buf);
   const charAsAscii = String(buf.toString().charCodeAt(0));
 
@@ -217,7 +221,7 @@ const handleConnection = (s: net.Socket): net.Socket => {
 
 const getConnection = () => {
 
-  s = net.createConnection({port}).setEncoding('utf8');
+  const s = container.conn = net.createConnection({port}).setEncoding('utf8');
 
   const reconnect = () => {
 
