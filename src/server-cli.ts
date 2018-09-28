@@ -59,19 +59,20 @@ const joinMessages = (...args: string[]) => {
 };
 
 const connections = new Set<net.Socket>();
+const q = async.queue<Task, any>((task, cb) => task(cb), 1);
+
+q.error = e => {
+  if (e) {
+    log.error(e.message || e);
+    for (let c of connections) {
+      c.write(JSON.stringify({message: util.inspect(e.message || e), lastMessage: true}) + `\n`);
+    }
+  }
+};
 
 const server = net.createServer(s => {
 
-  const q = async.queue<Task, any>((task, cb) => task(cb), 1);
-
   connections.add(s);
-
-  q.error = e => {
-    if (e) {
-      log.error(e.message || e);
-      sendMessage(false, util.inspect(e.message || e), null);
-    }
-  };
 
   s.on('error', err => {
     log.warn(err.message || err);

@@ -30,7 +30,7 @@
   },
   "homepage": "https://github.com/ORESoftware/typescript-library-skeleton#readme",
   "dependencies": {
-    "@oresoftware/json-stream-parser": "0.0.1002",
+    "@oresoftware/json-stream-parser": "latest",
     "async": "^2.6.1",
     "chalk": "^2.4.1"
   },
