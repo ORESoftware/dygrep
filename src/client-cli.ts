@@ -9,6 +9,7 @@ import * as net from 'net';
 import chalk from 'chalk';
 import {JSONParser} from "@oresoftware/json-stream-parser";
 import log from './logger';
+import * as safe from '@oresoftware/safe-stringify';
 
 const portIndex = process.argv.indexOf('-p');
 let port = 4900;
@@ -26,6 +27,8 @@ const acceptableCommands = {
   'list': true,
   'removeall': true,
   'remove:': true,
+  'search:': true,
+  'regex:': true,
   'clear': true,
   'help': true,
   'exit': true
@@ -61,6 +64,9 @@ const container = {
   conn: null as net.Socket
 };
 
+type Cmds = { [index: string]: number };
+const cmds: Cmds = Object.keys(acceptableCommands).reduce((a, b) => (a[b] = b.length, a), {} as Cmds);
+
 let currentLine = '', previousCmd = '', commands: Array<string> = [];
 
 const onUserHitReturn = (d: string) => {
@@ -88,6 +94,28 @@ const onUserHitReturn = (d: string) => {
     console.log(Object.keys(acceptableCommands));
     process.stdout.write(prompt);
     return;
+  }
+
+  {
+    // regex
+    let c = 'regex:';
+    if (lc.startsWith(c)) {
+      let ln = cmds[c];
+      log.info(chalk.gray('sending message to server:'), chalk.bold(lc));
+      s.write(safe.stringify({command: {[lc.split(':')[0]]: lc.slice(ln)}}) + '\n');
+      return;
+    }
+  }
+
+  {
+    // search
+    let c = 'search:';
+    if (lc.startsWith(c)) {
+      let ln = cmds[c];
+      log.info(chalk.gray('sending message to server:'), chalk.bold(lc));
+      s.write(safe.stringify({command: {[lc.split(':')[0]]: lc.slice(ln)}}) + '\n');
+      return;
+    }
   }
 
   if (lc === 'removeall') {
@@ -135,6 +163,43 @@ process.stdin.on('data', (buf) => {
     }
   }
 
+  if (buf == '\u001B\u005B\u0043') {
+    // left arrow key
+    return;
+  }
+
+  if (buf == '\u001B\u005B\u0044') {
+    // right arrow key
+    return;
+  }
+
+  if (buf == '\u001B\u005B\u0041') {
+    // up arrow key
+    previousCmd = commands.pop() || '';
+    if (previousCmd && (commands[0] !== previousCmd)) {
+      // we only unshift if it's not the same as the element already there
+      commands.unshift(previousCmd);
+    }
+    resetCurrentLine();
+    currentLine = previousCmd;
+    process.stdout.write(previousCmd);
+    return;
+  }
+
+  if (buf == '\u001B\u005B\u0042') {
+    // down arrow key
+    previousCmd = commands.shift() || '';
+    if (previousCmd && commands[commands.length - 1] !== previousCmd) {
+      // we only push if the it's not the same as the element already there
+      commands.push(previousCmd);
+    }
+    resetCurrentLine();
+    currentLine = previousCmd;
+    process.stdout.write(previousCmd);
+    return;
+  }
+
+
   switch (charAsAscii) {
 
     case '9': // tab
@@ -149,7 +214,7 @@ process.stdin.on('data', (buf) => {
       }
 
       resetCurrentLine();
-      currentLine = matches[0];
+      currentLine = matches[0] || '';
       process.stdout.write(currentLine);
       break;
 
@@ -176,7 +241,7 @@ process.stdin.on('data', (buf) => {
       break;
 
     case '27':
-      previousCmd = commands.pop();
+      previousCmd = commands.pop() || '';
       currentLine = previousCmd;
       resetCurrentLine();
       process.stdout.write(previousCmd);
@@ -201,7 +266,18 @@ const handleConnection = (s: net.Socket): net.Socket => {
     log.info(chalk.green.underline('dygrep server response:'));
 
     if (d && d.message) {
-      log.info(d.message);
+
+      if (d.message.lines) {
+        const lines = d.message.lines;
+        for (let v of lines) {
+          console.log(v);
+        }
+        console.log(`Overall: ${chalk.bold(lines.length)} lines matched your query.`)
+      }
+      else {
+        log.info(d.message);
+      }
+
     }
 
     if (d && d.lastMessage) {

@@ -10,6 +10,17 @@ import {EVCb} from "./index";
 import * as async from 'async';
 import * as util from "util";
 
+
+process.on('uncaughtException', e => {
+  const v = e.message || e;
+  log.error('uncaught exception:', chalk.magenta(typeof v === 'string' ? v : util.inspect(v)));
+});
+
+process.on('unhandledRejection', (r, d) => {
+  const v = r.message || r;
+  log.error('unhandled rejection:', chalk.magenta(typeof v === 'string' ? v : util.inspect(v)));
+});
+
 const portIndex = process.argv.indexOf('-p');
 let port = 4900;
 
@@ -25,16 +36,26 @@ const rl = readline.createInterface({
   input: process.stdin.resume()
 });
 
-const regex = new Map<string, RegExp>();
+const container = {
+  debug: false,
+  lines: <Array<string>>[],
+  regex: new Map<string, RegExp>()
+};
 
 rl.on('line', l => {
 
-  if (regex.size < 1) {
+  container.lines.push(l);
+
+  if (container.lines.length > 5000) {
+    container.lines.shift();
+  }
+
+  if (container.regex.size < 1) {
     process.stdout.write(l + '\n');
     return;
   }
 
-  for (let [k, v] of regex) {
+  for (let [k, v] of container.regex) {
     if (v.test(l)) {
       process.stdout.write(chalk.magenta(' (filtered) ') + l + '\n');
       break;
@@ -45,6 +66,9 @@ rl.on('line', l => {
 
 interface IncomingTCPMessage {
   command: {
+    regex: string,
+    clear: boolean,
+    search: string
     add: string,
     remove: string,
     list: boolean,
@@ -100,36 +124,59 @@ const server = net.createServer(s => {
     if (c.list) {
       return q.push(cb => {
         log.info('Listing all regex for the client.');
-        sendMessage(true, {regexes: Array.from(regex.keys()).map(k => ({regex: regex.get(k), str: k}))}, cb);
+        const regex = container.regex;
+        const regexes = Array.from(regex.keys()).map(k => ({regex: regex.get(k), str: k}));
+        sendMessage(true, {regexes}, cb);
       });
     }
 
-    if (c.removeall) {
+    if (c.removeall || c.clear) {
       return q.push(cb => {
         log.info('Clearing all regex.');
-        regex.clear();
+        container.regex.clear();
         sendMessage(true, `Cleared all regex.`, cb);
+      });
+    }
+
+    if (c.search) {
+      return q.push(cb => {
+        container.debug && log.info('Searching lines for:', c.search);
+        const matching = container.lines.filter(v => {
+          return v.match(c.search);
+        });
+        sendMessage(true, {lines: matching}, cb);
+      });
+    }
+
+    if (c.regex) {
+      return q.push(cb => {
+        const regex = new RegExp(c.regex);
+        container.debug && log.info('Getting all matching lines by regex:', regex);
+        const matching = container.lines.filter(v => {
+          return regex.test(v);
+        });
+        sendMessage(true, {lines: matching}, cb);
       });
     }
 
     if (c.add) {
       return q.push(cb => {
-        log.info('Adding regex:', c.add);
-        regex.set(c.add, new RegExp(c.add));
+        container.debug && log.info('Adding regex:', c.add);
+        container.regex.set(c.add, new RegExp(c.add));
         sendMessage(true, `Added regex: ${c.add}`, cb);
       });
     }
 
     if (c.remove) {
       return q.push(cb => {
-        regex.delete(c.remove);
+        container.regex.delete(c.remove);
         sendMessage(true, `Deleted regex: ${c.remove}.`, cb);
         log.info('Removed regex:', c.remove);
       });
     }
 
     log.error('No matching field was found:', d);
-    log.info('Regex:', regex);
+    log.debug('Current regex:', container.regex);
     sendMessage(true, 'Your request could not be processed.', null);
 
   });
