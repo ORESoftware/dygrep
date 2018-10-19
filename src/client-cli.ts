@@ -101,7 +101,7 @@ const onUserHitReturn = (d: string) => {
     let c = 'regex:';
     if (lc.startsWith(c)) {
       let ln = cmds[c];
-      log.info(chalk.gray('sending message to server:'), chalk.bold(lc));
+      log.debug(chalk.gray('sending message to server:'), chalk.bold(lc));
       s.write(safe.stringify({command: {[lc.split(':')[0]]: lc.slice(ln)}}) + '\n');
       return;
     }
@@ -112,33 +112,33 @@ const onUserHitReturn = (d: string) => {
     let c = 'search:';
     if (lc.startsWith(c)) {
       let ln = cmds[c];
-      log.info(chalk.gray('sending message to server:'), chalk.bold(lc));
+      log.debug(chalk.gray('sending message to server:'), chalk.bold(lc));
       s.write(safe.stringify({command: {[lc.split(':')[0]]: lc.slice(ln)}}) + '\n');
       return;
     }
   }
 
   if (lc === 'removeall') {
-    console.log('sending message to server:', lc);
-    s.write(JSON.stringify({command: {removeall: true}}) + '\n');
+    log.debug('sending message to server:', lc);
+    s.write(safe.stringify({command: {removeall: true}}) + '\n');
     return;
   }
 
   if (lc === 'list') {
-    console.log('sending message to server:', lc);
-    s.write(JSON.stringify({command: {list: true}}) + '\n');
+    log.debug('sending message to server:', lc);
+    s.write(safe.stringify({command: {list: true}}) + '\n');
     return;
   }
 
   if (lc.startsWith('add:')) {
-    console.log('sending message to server:', lc);
-    s.write(JSON.stringify({command: {add: lc.slice(4)}}) + '\n');
+    log.debug('sending message to server:', lc);
+    s.write(safe.stringify({command: {add: lc.slice(4)}}) + '\n');
     return;
   }
 
   if (lc.startsWith('remove:')) {
-    console.log('sending message to server:', lc);
-    s.write(JSON.stringify({command: {remove: lc.slice(7)}}) + '\n');
+    log.debug('sending message to server:', lc);
+    s.write(safe.stringify({command: {remove: lc.slice(7)}}) + '\n');
     return;
   }
 
@@ -149,7 +149,7 @@ const onUserHitReturn = (d: string) => {
 };
 
 process.stdin.setRawMode(true);
-process.stdin.on('data', (buf) => {
+process.stdin.on('data', buf => {
 
   const s = container.conn;
   const str = String(buf);
@@ -272,6 +272,7 @@ const handleConnection = (s: net.Socket): net.Socket => {
         for (let v of lines) {
           console.log(v);
         }
+        console.log('_____________________________________________________________')
         console.log(`Overall: ${chalk.bold(lines.length)} lines matched your query.`)
       }
       else {

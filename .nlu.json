@@ -7,13 +7,14 @@
     "your comments go here"
   ],
   "searchRoots": [
-    "../../"
+    "../.."
   ],
   "ignore": [
     "/node_modules/",
     "/.git/"
   ],
   "list": [
-    "@oresoftware/json-stream-parser"
+    "@oresoftware/json-stream-parser",
+    "@oresoftware/safe-stringify"
   ]
 }

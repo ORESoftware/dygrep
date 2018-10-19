@@ -46,7 +46,7 @@ rl.on('line', l => {
 
   container.lines.push(l);
 
-  if (container.lines.length > 5000) {
+  if (container.lines.length > 99000) {
     container.lines.shift();
   }
 
@@ -140,9 +140,11 @@ const server = net.createServer(s => {
 
     if (c.search) {
       return q.push(cb => {
-        container.debug && log.info('Searching lines for:', c.search);
+        const searchTerm = String(c.search || '').trim();
+        log.info('searching for:', searchTerm);
+        container.debug && log.info('Searching lines for:', searchTerm);
         const matching = container.lines.filter(v => {
-          return v.match(c.search);
+          return String(v || '').toLowerCase().match(searchTerm);
         });
         sendMessage(true, {lines: matching}, cb);
       });
@@ -153,7 +155,7 @@ const server = net.createServer(s => {
         const regex = new RegExp(c.regex);
         container.debug && log.info('Getting all matching lines by regex:', regex);
         const matching = container.lines.filter(v => {
-          return regex.test(v);
+          return regex.test(String(v || '').toLowerCase());
         });
         sendMessage(true, {lines: matching}, cb);
       });
