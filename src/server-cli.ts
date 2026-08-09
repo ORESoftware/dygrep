@@ -338,8 +338,8 @@ server.listen(port, () => {
   log.info(`Dygrep server listening on port ${port}.`);
 });
 
-process.on('SIGTERM', onSignal);
-process.on('SIGINT', onSignal);
+process.on('SIGTERM', () => onSignal('SIGTERM'));
+process.on('SIGINT', () => onSignal('SIGINT'));
 
 // In a terminal, Ctrl-D closes readline. It is intentionally ignored while the
 // server is running and is armed only after the first interactive SIGINT.
