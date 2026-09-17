@@ -325,7 +325,12 @@ const startGracefulShutdown = (trigger: string) => {
     }
 
     const forced = shutdownPhase === 'forcing';
-    finishShutdown(forced ? 'forced' : 'graceful', forced ? forcedBy : trigger, err ? 1 : 0);
+    const forcedExitCode = forced && forcedBy === 'stdin_eof' ? 0 : 1;
+    finishShutdown(
+      forced ? 'forced' : 'graceful',
+      forced ? forcedBy : trigger,
+      forced ? forcedExitCode : (err ? 1 : 0)
+    );
   });
 };
 
