@@ -190,19 +190,23 @@ type ShutdownPhase = 'running' | 'draining' | 'forcing' | 'stopped';
 type ShutdownLevel = 'info' | 'warn' | 'error';
 
 const stdinIsTTY = Boolean(process.stdin.isTTY);
-const shutdownStartedAt = Date.now();
+const DEFAULT_GRACE_MS = 5000;
+const MAX_GRACE_MS = 60 * 60 * 1000;
 const configuredGraceMs = parseInt(process.env.SHUTDOWN_GRACE_MS || '', 10);
-const graceMs = Number.isInteger(configuredGraceMs) && configuredGraceMs > 0
+const graceMs = Number.isSafeInteger(configuredGraceMs) && configuredGraceMs > 0 && configuredGraceMs <= MAX_GRACE_MS
   ? configuredGraceMs
-  : 30000;
+  : DEFAULT_GRACE_MS;
 
 let shutdownPhase: ShutdownPhase = 'running';
+let shutdownStartedAt: number | null = null;
 let firstShutdownTrigger = '';
 let signalCount = 0;
 let graceTimer: any = null;
 let forceSettleTimer: any = null;
 let forcedBy = '';
 let finished = false;
+let readlineClosed = false;
+let ctrlDArmed = false;
 
 const shutdownLog = (
   level: ShutdownLevel,
@@ -218,7 +222,7 @@ const shutdownLog = (
     signal_count: signalCount,
     grace_ms: graceMs,
     active_connections: connections.size,
-    elapsed_ms: Date.now() - shutdownStartedAt
+    elapsed_ms: shutdownStartedAt === null ? 0 : Date.now() - shutdownStartedAt
   }, fields));
 
   if (level === 'error') {
@@ -237,6 +241,7 @@ const finishShutdown = (outcome: 'graceful' | 'forced', trigger: string, exitCod
     return;
   }
   finished = true;
+  ctrlDArmed = false;
   shutdownPhase = 'stopped';
   clearTimeout(graceTimer);
   clearTimeout(forceSettleTimer);
@@ -257,6 +262,7 @@ const forceShutdown = (reason: string) => {
   }
   shutdownPhase = 'forcing';
   forcedBy = reason;
+  ctrlDArmed = false;
   clearTimeout(graceTimer);
   shutdownLog('warn', 'server.shutdown.force', 'Forcing shutdown; active TCP connections will be dropped', {
     forced_by: reason,
@@ -270,11 +276,12 @@ const forceShutdown = (reason: string) => {
     socket.destroy();
   }
 
-  // The original server.close callback normally completes as soon as the
-  // destroyed sockets leave the connection set. Keep a bounded fallback so a
-  // broken socket implementation cannot pin the process forever.
+  // server.close normally settles once destroyed sockets are gone. Keep a
+  // bounded fallback so a broken socket/listener implementation cannot pin the
+  // process indefinitely after an explicit force/deadline transition.
   forceSettleTimer = setTimeout(() => {
-    finishShutdown('forced', reason, reason === 'deadline' ? 1 : 0);
+    const exitCode = reason === 'stdin_eof' ? 0 : 1;
+    finishShutdown('forced', reason, exitCode);
   }, 1000);
 };
 
@@ -284,6 +291,7 @@ const startGracefulShutdown = (trigger: string) => {
   }
 
   shutdownPhase = 'draining';
+  shutdownStartedAt = Date.now();
   firstShutdownTrigger = trigger;
   signalCount = 1;
   shutdownLog('info', 'server.shutdown.requested', 'Listener is closing and active TCP connections are draining', {
@@ -291,9 +299,17 @@ const startGracefulShutdown = (trigger: string) => {
   });
 
   if (stdinIsTTY && trigger === 'SIGINT') {
-    shutdownLog('info', 'server.shutdown.interactive', 'Press Ctrl-C again or Ctrl-D to force close', {
-      trigger
-    });
+    if (readlineClosed) {
+      shutdownLog('warn', 'server.shutdown.interactive_unavailable', 'stdin is already closed; waiting for graceful deadline instead of advertising Ctrl-D force', {
+        trigger
+      });
+    }
+    else {
+      ctrlDArmed = true;
+      shutdownLog('info', 'server.shutdown.interactive', 'Use Ctrl-D to force shutdown; repeated Ctrl-C does not bypass the grace window', {
+        trigger
+      });
+    }
   }
 
   graceTimer = setTimeout(() => forceShutdown('deadline'), graceMs);
@@ -321,7 +337,9 @@ const onSignal = (signal: string) => {
 
   if (shutdownPhase === 'draining') {
     signalCount += 1;
-    forceShutdown(signal.toLowerCase());
+    shutdownLog('info', 'server.shutdown.signal_ignored', 'Shutdown is already draining; repeated signals do not force termination', {
+      signal
+    });
   }
 };
 
@@ -341,10 +359,12 @@ server.listen(port, () => {
 process.on('SIGTERM', () => onSignal('SIGTERM'));
 process.on('SIGINT', () => onSignal('SIGINT'));
 
-// In a terminal, Ctrl-D closes readline. It is intentionally ignored while the
-// server is running and is armed only after the first interactive SIGINT.
-rl.once('close', () => {
-  if (stdinIsTTY && shutdownPhase === 'draining' && firstShutdownTrigger === 'SIGINT') {
+// Ctrl-D is an explicit force action only after an interactive SIGINT has
+// started the graceful drain. EOF before that point closes readline but does
+// not shut down the TCP server or silently become future force intent.
+rl.on('close', () => {
+  readlineClosed = true;
+  if (ctrlDArmed && stdinIsTTY && shutdownPhase === 'draining' && firstShutdownTrigger === 'SIGINT') {
     forceShutdown('stdin_eof');
   }
 });
