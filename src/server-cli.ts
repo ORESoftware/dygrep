@@ -16,8 +16,8 @@ process.on('uncaughtException', e => {
   log.error('uncaught exception:', chalk.magenta(typeof v === 'string' ? v : util.inspect(v)));
 });
 
-process.on('unhandledRejection', (r, d) => {
-  const v = r.message || r;
+process.on('unhandledRejection', (r: any) => {
+  const v = r && (r.message || r);
   log.error('unhandled rejection:', chalk.magenta(typeof v === 'string' ? v : util.inspect(v)));
 });
 
@@ -97,6 +97,7 @@ q.error = e => {
 const server = net.createServer(s => {
 
   connections.add(s);
+  s.once('close', () => connections.delete(s));
 
   s.on('error', err => {
     log.warn(err.message || err);
@@ -185,41 +186,197 @@ const server = net.createServer(s => {
 
 });
 
-server.listen(port);
+type ShutdownPhase = 'running' | 'draining' | 'forcing' | 'stopped';
+type ShutdownLevel = 'info' | 'warn' | 'error';
 
-const onSignal = (signal: string) => {
+const stdinIsTTY = Boolean(process.stdin.isTTY);
+const DEFAULT_GRACE_MS = 5000;
+const MAX_GRACE_MS = 60 * 60 * 1000;
+const configuredGraceMs = parseInt(process.env.SHUTDOWN_GRACE_MS || '', 10);
+const graceMs = Number.isSafeInteger(configuredGraceMs) && configuredGraceMs > 0 && configuredGraceMs <= MAX_GRACE_MS
+  ? configuredGraceMs
+  : DEFAULT_GRACE_MS;
 
-  log.warn('services-manager received signal:', signal);
+let shutdownPhase: ShutdownPhase = 'running';
+let shutdownStartedAt: number | null = null;
+let firstShutdownTrigger = '';
+let signalCount = 0;
+let graceTimer: any = null;
+let forceSettleTimer: any = null;
+let forcedBy = '';
+let finished = false;
+let readlineClosed = false;
+let ctrlDArmed = false;
 
-  const to = setTimeout(() => {
-    log.warn('Server close call timed out.');
-    process.exit(1);
-  }, 500);
+const shutdownLog = (
+  level: ShutdownLevel,
+  event: string,
+  message: string,
+  fields: {[key: string]: any} = {}
+) => {
+  const record = JSON.stringify(Object.assign({
+    event,
+    message,
+    phase: shutdownPhase,
+    tty: stdinIsTTY,
+    signal_count: signalCount,
+    grace_ms: graceMs,
+    active_connections: connections.size,
+    elapsed_ms: shutdownStartedAt === null ? 0 : Date.now() - shutdownStartedAt
+  }, fields));
 
-  server.close((err: any) => {
-    clearTimeout(to);
-    if (err) {
-      log.warn(err);
-      process.exit(1);
-    }
-    else {
-      process.exit(0);
-    }
-  });
-
+  if (level === 'error') {
+    log.error(record);
+  }
+  else if (level === 'warn') {
+    log.warn(record);
+  }
+  else {
+    log.info(record);
+  }
 };
 
-process.once('SIGTERM', onSignal);
-process.once('SIGINT', onSignal);
+const finishShutdown = (outcome: 'graceful' | 'forced', trigger: string, exitCode: number) => {
+  if (finished) {
+    return;
+  }
+  finished = true;
+  ctrlDArmed = false;
+  shutdownPhase = 'stopped';
+  clearTimeout(graceTimer);
+  clearTimeout(forceSettleTimer);
+  shutdownLog(exitCode === 0 ? 'info' : 'error', 'server.shutdown.complete', 'Dygrep server shutdown complete', {
+    outcome,
+    trigger,
+    first_trigger: firstShutdownTrigger,
+    exit_code: exitCode
+  });
+  process.exitCode = exitCode;
+  rl.close();
+  process.stdin.pause();
+};
 
-process.once('exit', code => {
+const forceShutdown = (reason: string) => {
+  if (shutdownPhase !== 'draining') {
+    return;
+  }
+  shutdownPhase = 'forcing';
+  forcedBy = reason;
+  ctrlDArmed = false;
+  clearTimeout(graceTimer);
+  shutdownLog('warn', 'server.shutdown.force', 'Forcing shutdown; active TCP connections will be dropped', {
+    forced_by: reason,
+    first_trigger: firstShutdownTrigger
+  });
 
-  log.warn('Dygrep server is exiting with code:', code);
-
-  server.close();
-
-  for (let v of connections) {
-    v.destroy();
+  if (typeof (q as any).kill === 'function') {
+    (q as any).kill();
+  }
+  for (let socket of connections) {
+    socket.destroy();
   }
 
+  // server.close normally settles once destroyed sockets are gone. Keep a
+  // bounded fallback so a broken socket/listener implementation cannot pin the
+  // process indefinitely after an explicit force/deadline transition.
+  forceSettleTimer = setTimeout(() => {
+    const exitCode = reason === 'stdin_eof' ? 0 : 1;
+    finishShutdown('forced', reason, exitCode);
+  }, 1000);
+};
+
+const startGracefulShutdown = (trigger: string) => {
+  if (shutdownPhase !== 'running') {
+    return;
+  }
+
+  shutdownPhase = 'draining';
+  shutdownStartedAt = Date.now();
+  firstShutdownTrigger = trigger;
+  signalCount = 1;
+  shutdownLog('info', 'server.shutdown.requested', 'Listener is closing and active TCP connections are draining', {
+    trigger
+  });
+
+  if (stdinIsTTY && trigger === 'SIGINT') {
+    if (readlineClosed) {
+      shutdownLog('warn', 'server.shutdown.interactive_unavailable', 'stdin is already closed; waiting for graceful deadline instead of advertising Ctrl-D force', {
+        trigger
+      });
+    }
+    else {
+      ctrlDArmed = true;
+      shutdownLog('info', 'server.shutdown.interactive', 'Use Ctrl-D to force shutdown; repeated Ctrl-C does not bypass the grace window', {
+        trigger
+      });
+    }
+  }
+
+  graceTimer = setTimeout(() => forceShutdown('deadline'), graceMs);
+  server.close((err?: Error) => {
+    if (err) {
+      shutdownLog('error', 'server.shutdown.listener_error', 'TCP listener failed while closing', {
+        error: err.message || String(err)
+      });
+      if (shutdownPhase === 'draining') {
+        forceShutdown('listener_error');
+        return;
+      }
+    }
+
+    const forced = shutdownPhase === 'forcing';
+    const forcedExitCode = forced && forcedBy === 'stdin_eof' ? 0 : 1;
+    finishShutdown(
+      forced ? 'forced' : 'graceful',
+      forced ? forcedBy : trigger,
+      forced ? forcedExitCode : (err ? 1 : 0)
+    );
+  });
+};
+
+const onSignal = (signal: string) => {
+  if (shutdownPhase === 'running') {
+    startGracefulShutdown(signal);
+    return;
+  }
+
+  if (shutdownPhase === 'draining') {
+    signalCount += 1;
+    shutdownLog('info', 'server.shutdown.signal_ignored', 'Shutdown is already draining; repeated signals do not force termination', {
+      signal
+    });
+  }
+};
+
+server.on('error', err => {
+  shutdownLog('error', 'server.error', 'Dygrep TCP server error', {
+    error: err.message || String(err)
+  });
+  if (shutdownPhase === 'running') {
+    process.exitCode = 1;
+  }
+});
+
+server.listen(port, () => {
+  log.info(`Dygrep server listening on port ${port}.`);
+});
+
+process.on('SIGTERM', () => onSignal('SIGTERM'));
+process.on('SIGINT', () => onSignal('SIGINT'));
+
+// Ctrl-D is an explicit force action only after an interactive SIGINT has
+// started the graceful drain. EOF before that point closes readline but does
+// not shut down the TCP server or silently become future force intent.
+rl.on('close', () => {
+  readlineClosed = true;
+  if (ctrlDArmed && stdinIsTTY && shutdownPhase === 'draining' && firstShutdownTrigger === 'SIGINT') {
+    forceShutdown('stdin_eof');
+  }
+});
+
+process.once('exit', code => {
+  log.warn('Dygrep server is exiting with code:', code);
+  for (let socket of connections) {
+    socket.destroy();
+  }
 });
